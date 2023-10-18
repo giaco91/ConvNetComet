@@ -1,3 +1,8 @@
 
-
+Segmentation/models/segnet
+Segmentation/meta_data/segnet/
 Shared_Resources/Shared_Data
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
