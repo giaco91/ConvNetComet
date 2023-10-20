@@ -18,10 +18,10 @@ class DownConv2(nn.Module):
     def __init__(self, chin, chout, kernel_size):
         super().__init__()
         self.seq = nn.Sequential(
-            nn.Conv2d(in_channels=chin, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False),
+            nn.Conv2d(in_channels=chin, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False,padding_mode='reflect'),
             nn.BatchNorm2d(chout),
             nn.ReLU(),
-            nn.Conv2d(in_channels=chout, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False),
+            nn.Conv2d(in_channels=chout, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False,padding_mode='reflect'),
             nn.BatchNorm2d(chout),
             nn.ReLU(),
         )
@@ -37,13 +37,13 @@ class DownConv3(nn.Module):
     def __init__(self, chin, chout, kernel_size):
         super().__init__()
         self.seq = nn.Sequential(
-            nn.Conv2d(in_channels=chin, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False),
+            nn.Conv2d(in_channels=chin, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False,padding_mode='reflect'),
             nn.BatchNorm2d(chout),
             nn.ReLU(),
-            nn.Conv2d(in_channels=chout, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False),
+            nn.Conv2d(in_channels=chout, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False,padding_mode='reflect'),
             nn.BatchNorm2d(chout),
             nn.ReLU(),
-            nn.Conv2d(in_channels=chout, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False),
+            nn.Conv2d(in_channels=chout, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False,padding_mode='reflect'),
             nn.BatchNorm2d(chout),
             nn.ReLU(),
         )
@@ -59,10 +59,10 @@ class UpConv2(nn.Module):
     def __init__(self, chin, chout, kernel_size):
         super().__init__()
         self.seq = nn.Sequential(
-            nn.Conv2d(in_channels=chin, out_channels=chin, kernel_size=kernel_size, padding=kernel_size//2, bias=False),
+            nn.Conv2d(in_channels=chin, out_channels=chin, kernel_size=kernel_size, padding=kernel_size//2, bias=False,padding_mode='reflect'),
             nn.BatchNorm2d(chin),
             nn.ReLU(),
-            nn.Conv2d(in_channels=chin, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False),
+            nn.Conv2d(in_channels=chin, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False,padding_mode='reflect'),
             nn.BatchNorm2d(chout),
             nn.ReLU(),
         )
@@ -77,13 +77,13 @@ class UpConv3(nn.Module):
     def __init__(self, chin, chout, kernel_size):
         super().__init__()
         self.seq = nn.Sequential(
-            nn.Conv2d(in_channels=chin, out_channels=chin, kernel_size=kernel_size, padding=kernel_size//2, bias=False),
+            nn.Conv2d(in_channels=chin, out_channels=chin, kernel_size=kernel_size, padding=kernel_size//2, bias=False,padding_mode='reflect'),
             nn.BatchNorm2d(chin),
             nn.ReLU(),
-            nn.Conv2d(in_channels=chin, out_channels=chin, kernel_size=kernel_size, padding=kernel_size//2, bias=False),
+            nn.Conv2d(in_channels=chin, out_channels=chin, kernel_size=kernel_size, padding=kernel_size//2, bias=False,padding_mode='reflect'),
             nn.BatchNorm2d(chin),
             nn.ReLU(),
-            nn.Conv2d(in_channels=chin, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False),
+            nn.Conv2d(in_channels=chin, out_channels=chout, kernel_size=kernel_size, padding=kernel_size//2, bias=False,padding_mode='reflect'),
             nn.BatchNorm2d(chout),
             nn.ReLU(),
         )
@@ -96,24 +96,25 @@ class UpConv3(nn.Module):
 
 
 class SegNet(torch.nn.Module):
-    def __init__(self, kernel_size,in_channels=3,out_channels=3):
+    def __init__(self, kernel_size,in_channels=3,out_channels=3,width_complexity=3):
         super().__init__()
 
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.width_complexity = width_complexity
         
         self.bn_input = nn.BatchNorm2d(in_channels)
         
         
-        self.dc1 = DownConv2(in_channels, 2**3, kernel_size=kernel_size)
-        self.dc2 = DownConv2(2**3, 2**4, kernel_size=kernel_size)
-        self.dc3 = DownConv3(2**4, 2**5, kernel_size=kernel_size)
-        self.dc4 = DownConv3(2**5, 2**6, kernel_size=kernel_size)
+        self.dc1 = DownConv2(in_channels, 2**width_complexity, kernel_size=kernel_size)
+        self.dc2 = DownConv2(2**width_complexity, 2**(width_complexity+1), kernel_size=kernel_size)
+        self.dc3 = DownConv3(2**(width_complexity+1), 2**(width_complexity+2), kernel_size=kernel_size)
+        self.dc4 = DownConv3(2**(width_complexity+2), 2**(width_complexity+3), kernel_size=kernel_size)
 
-        self.uc4 = UpConv3(2**6, 2**5, kernel_size=kernel_size)
-        self.uc3 = UpConv3(2**5, 2**4, kernel_size=kernel_size)
-        self.uc2 = UpConv2(2**4, 2**3, kernel_size=kernel_size)
-        self.uc1 = UpConv2(2**3, out_channels, kernel_size=kernel_size)
+        self.uc4 = UpConv3(2**(width_complexity+3), 2**(width_complexity+2), kernel_size=kernel_size)
+        self.uc3 = UpConv3(2**(width_complexity+2), 2**(width_complexity+1), kernel_size=kernel_size)
+        self.uc2 = UpConv2(2**(width_complexity+1), 2**width_complexity, kernel_size=kernel_size)
+        self.uc1 = UpConv2(2**width_complexity, out_channels, kernel_size=kernel_size)
         
     def forward(self, batch: torch.Tensor):
         x = self.bn_input(batch)
@@ -139,12 +140,12 @@ class SegNet(torch.nn.Module):
 
 
 class DepthwiseSeparableConv2d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, padding, bias=True):
+    def __init__(self, in_channels, out_channels, kernel_size, padding, bias=True,width_complexity=3):
         super().__init__()
         # The depthwise conv is basically just a grouped convolution in PyTorch with
         # the number of distinct groups being the same as the number of input (and output)
         # channels for that layer.
-        self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size=kernel_size, padding=padding, bias=bias, groups=in_channels)
+        self.depthwise = nn.Conv2d(in_channels, in_channels, kernel_size=kernel_size, padding=padding, bias=bias, groups=in_channels,padding_mode='reflect')
         # The pointwise convolution stretches across all the output channels using
         # a 1x1 kernel.
         self.pointwise = nn.Conv2d(in_channels, out_channels, kernel_size=1, bias=bias)
@@ -153,6 +154,7 @@ class DepthwiseSeparableConv2d(nn.Module):
         x = self.depthwise(x)
         x = self.pointwise(x)
         return x
+
 
 class DownDSConv2(nn.Module):
     def __init__(self, chin, chout, kernel_size):
@@ -172,6 +174,7 @@ class DownDSConv2(nn.Module):
         pool_shape = y.shape
         y, indices = self.mp(y)
         return y, indices, pool_shape
+
 
 class DownDSConv3(nn.Module):
     def __init__(self, chin, chout, kernel_size):
@@ -238,22 +241,23 @@ class UpDSConv3(nn.Module):
 class SegNetDSC(torch.nn.Module):
     #SegNet with depth-wise separable convolutions. 
     #This constrains the kernel-space but saves a lot of memory and parameters
-    def __init__(self, kernel_size,in_channels=3,out_channels=3):
+    def __init__(self, kernel_size,in_channels=3,out_channels=3,width_complexity=3):
         super().__init__()
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.width_complexity = width_complexity
         
         self.bn_input = nn.BatchNorm2d(in_channels)
         
-        self.dc1 = DownDSConv2(in_channels, 2**3, kernel_size=kernel_size)
-        self.dc2 = DownDSConv2(2**3, 2**4, kernel_size=kernel_size)
-        self.dc3 = DownDSConv3(2**4, 2**5, kernel_size=kernel_size)
-        self.dc4 = DownDSConv3(2**5, 2**6, kernel_size=kernel_size)
+        self.dc1 = DownDSConv2(in_channels, 2**width_complexity, kernel_size=kernel_size)
+        self.dc2 = DownDSConv2(2**width_complexity, 2**(width_complexity+1), kernel_size=kernel_size)
+        self.dc3 = DownDSConv3(2**(width_complexity+1), 2**(width_complexity+2), kernel_size=kernel_size)
+        self.dc4 = DownDSConv3(2**(width_complexity+2), 2**(width_complexity+3), kernel_size=kernel_size)
 
-        self.uc4 = UpDSConv3(2**6, 2**5, kernel_size=kernel_size)
-        self.uc3 = UpDSConv3(2**5, 2**4, kernel_size=kernel_size)
-        self.uc2 = UpDSConv2(2**4, 2**3, kernel_size=kernel_size)
-        self.uc1 = UpDSConv2(2**3, out_channels, kernel_size=kernel_size)
+        self.uc4 = UpDSConv3(2**(width_complexity+3), 2**(width_complexity+2), kernel_size=kernel_size)
+        self.uc3 = UpDSConv3(2**(width_complexity+2), 2**(width_complexity+1), kernel_size=kernel_size)
+        self.uc2 = UpDSConv2(2**(width_complexity+1), 2**width_complexity, kernel_size=kernel_size)
+        self.uc1 = UpDSConv2(2**width_complexity, out_channels, kernel_size=kernel_size)
         
     def forward(self, batch: torch.Tensor):
         x = self.bn_input(batch)
