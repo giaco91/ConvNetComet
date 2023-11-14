@@ -14,6 +14,8 @@ https://towardsdatascience.com/a-basic-introduction-to-separable-convolutions-b9
 from torch import nn
 import torch
 
+
+
 class DownConv2(nn.Module):
     def __init__(self, chin, chout, kernel_size):
         super().__init__()
@@ -140,7 +142,7 @@ class SegNet(torch.nn.Module):
 
 
 class DepthwiseSeparableConv2d(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, padding, bias=True,width_complexity=3):
+    def __init__(self, in_channels, out_channels, kernel_size, padding, bias=True):
         super().__init__()
         # The depthwise conv is basically just a grouped convolution in PyTorch with
         # the number of distinct groups being the same as the number of input (and output)
