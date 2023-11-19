@@ -36,6 +36,7 @@ def close_figures():
     # end while
 # end def
 
+
 # Train the model for a single epoch
 def train_model(model, loader, optimizer):
     to_device(model.train())
@@ -54,6 +55,7 @@ def train_model(model, loader, optimizer):
         inputs = to_device(inputs)
         targets = to_device(targets)
         outputs = model(inputs)
+        
         
         # The ground truth labels have a channel dimension (NCHW).
         # We need to remove it before passing it into
