@@ -81,6 +81,8 @@ class CNNDecoder(torch.nn.Module):
         
         for i in range(self.network_depth-1, -1, -1):#counts backwards, because we start with the lowest scale (highest scale number)
             
+            scale_name = 'scale_'+str(i)
+
             dimensions = self.dimension_specification[i]
             
             up_layer_i=[]
@@ -91,51 +93,54 @@ class CNNDecoder(torch.nn.Module):
                 n_channels_in = dimensions['width_skip']
             else:
                 n_channels_in = dimensions['width_skip'] + dimensions['width']#additionally we expect the lower scale input to have dimensions['width']
+
                 
             #projecting to the width of the current level
             up_layer_i.append(ConvLayerEqualBlock(n_channels_in,dimensions['width'],kernel_size=1))#kernelsize unclear, but it is an expensive projection (wide input)
 
             #adding depth to that scale
             for k in range(dimensions['depth']):
-                up_layer_i.append(ResidualBlock2(n_channels_in, kernel_size = 1))
+                up_layer_i.append(ResidualBlock2(dimensions['width'], kernel_size = 1))
             
             #upsampling if we are not in the highest scale
             if i>0:
                 n_channels_out = self.dimension_specification[i-1]['width']
 
                 #upsampling
-                up_layer_i.append(UpsampleConvLayer3(dimensions['width'], n_channels_out, kernel_size=3, upsample=2))
+                up_layer_i.append(UpsampleConvLayer(dimensions['width'], n_channels_out, kernel_size=3, upsample=2))
 
-            decoder_layers[i] = nn.Sequential(*up_layer_i)
+            decoder_layers[scale_name] = nn.Sequential(*up_layer_i)
         
         return decoder_layers
 
 
     def get_decoder_head(self,kernel_size=9, stride=1):
-        return ConvLayerEqual(self.dimension_specification[0]['width'], self.out_ch, kernel_size=kernel_size, stride=stride)
+        return ConvLayerEqual(self.dimension_specification[0]['width'], self.out_ch, kernel_size=kernel_size)
 
-    def apply_decoder_head(self,z,skip_connections):
-        #apply decoder head
-        if self.with_skip_connection and len(self.decoder_layers)<=self.n_skip_connections:
-            z=torch.cat([z, skip_connections[-len(self.decoder_layers)]], dim=1)
-        z = self.decoder_head(z)
-        return z
 
     
-    def apply_decoder(self,z,skip_connections):
+    def apply_decoder(self,skip_connections):
         
         #apply decoder layers
-        for i,(name,layer_net) in enumerate(self.decoder_layers.items()):
-            skip_connection_index = self.network_depth-1-i#the layer with the highest inedex is for the encoder is the 0 index for the decoder
-            if i==0:
+        #for scale_name,layer_net in self.decoder_layers.items():
+        for i in range(self.network_depth-1, -1, -1):#counts backwards, because we start with the lowest scale (highest scale number)
+            scale_name = 'scale_'+str(i)
+            layer_net = self.decoder_layers[scale_name]
+            
+
+            if i == self.network_depth-1:
+                z_skip = skip_connections[scale_name]
                 #we need to have guaranteed that the deepest level has a skip connection
-                assert skip_connection_index in skip_connections.keys()
-                z_skip = skip_connections[skip_connection_index]
-                z = layer_net(z_skip)
+                #otherwise the encoder encodes the deepest scale for nothing. Here we intend to catch that mistake
+                assert scale_name in skip_connections.keys(),'the deepest level should have a skip connection'
+                
+                z = layer_net(z_skip)#we keep updating z
             else:
-                if skip_connection_index in skip_connections.keys():
+
+                if scale_name in skip_connections.keys():
                     #if there is a skip-connection, concatenate
-                    z=torch.cat([z, skip_connections[skip_connection_index]], dim=1)
+                    z_skip = skip_connections[scale_name]
+                    z=torch.cat([z, z_skip], dim=1)
 
                 z = layer_net(z)#dimension of the provided skip-connections need to be compatible with the architecture specifications
         return z
@@ -148,13 +153,19 @@ class CNNDecoder(torch.nn.Module):
 
         return y
     
-    def forward(self,skip_connections,pad=None):
+    def forward(self,encoder_out,pad=None):
         '''
         Optionally can get initial padding
         '''
-        
+
+        pad = encoder_out['initial_padding']
+        skip_connections = encoder_out['skip_connections']
+
+
         y = self.apply_decoder(skip_connections)
-        y = self.apply_decoder_head(y,skip_connections)
+
+        y = self.decoder_head(y)
+
         y = self.undo_padding(y,pad)
 
             
@@ -181,7 +192,7 @@ class CNNEncoder(torch.nn.Module):
                                             This corresponds to an item: dimension_specification[s] = {'width': x, 'depth': y, 'width_skip': z}
         '''
         self.in_ch=in_ch
-        self.n_down=len(dimension_specification)
+        self.n_down=len(dimension_specification)-1#the number of downsampling steps equals the total number of scales minus one.
         self.down_sample_factor = 2**self.n_down
         self.pooling_mode = pooling_mode
         self.dimension_specification = dimension_specification
@@ -194,9 +205,7 @@ class CNNEncoder(torch.nn.Module):
         if verbose:
             print('dimension_specification: ',dimension_specification)
         
-    
-        self.preprocessing_layer = self.get_preprocessing_layer()
-        self.down_layers, self.skip_layers = self.get_encoder_layers()
+        self.scale_layers, self.skip_layers = self.get_encoder_layers()
 
     def check_if_dimension_specification_is_valid(self):
         for i in range(self.network_depth):
@@ -208,68 +217,64 @@ class CNNEncoder(torch.nn.Module):
 
         self.dimension_specification[self.network_depth-1]['width_skip']>=1,'The last layer must have skip connection,i.e. an output at that last scale, otherwise this scale is useless.'
 
-    def get_preprocessing_layer(self):
-        out_ch = self.dimension_specification[0]['width']
-        
-        preprocessing_layer=[nn.BatchNorm2d(self.in_ch,affine=False,momentum=None),#affine=False to ensure (mean,std) = (0,1), momentum=None is cumulative average (simple average)
-                            ConvLayerEqualBlock(self.in_ch,out_ch,kernel_size=9,momentum=0.05),#small momentum momentum=0.05, because we don't expect much fluctuation in the first layer
-                            ]
-
-        return nn.Sequential(*preprocessing_layer)
         
     def get_encoder_layers(self):
         
-        down_layers = nn.ModuleDict()
+        scale_layers = nn.ModuleDict()
         skip_layers = nn.ModuleDict()
+
         
         #Layers
-        n_ch_in = self.in_ch
         for i in range(self.network_depth):
+            scale_name = 'scale_'+str(i)
             dimensions = self.dimension_specification[i]
 
-            down_layer_i=[]
+            
+            scale_layer_i=[]
 
-            #adding depth at that scale
-            for k in range(dimensions['depth']):
-                down_layer_i.append(ResidualBlock2(dimensions['width'], kernel_size = 1))
+            if i==0:
+                #first layer we have to tread slightly extra, because of the initial batchnorm and the fact, that we don't start with down-sampling
+                scale_layer_i.append(nn.BatchNorm2d(self.in_ch,affine=False,momentum=None)),#affine=False to ensure (mean,std) = (0,1), momentum=None is cumulative average (simple average)
+                scale_layer_i.append(ConvLayerEqualBlock(self.in_ch,dimensions['width'],kernel_size=9,momentum=0.05)),#small momentum momentum=0.05, because we don't expect much fluctuation in the first layer
+                #adding depth at that scale
+                for k in range(dimensions['depth']):
+                    scale_layer_i.append(ResidualBlock2(dimensions['width'], kernel_size = 1))
+            else:
+                #downsampling
+                scale_layer_i.append(DownsampleConvLayer(self.dimension_specification[i-1]['width'], dimensions['width'], kernel_size=3,
+                                     pooling_mode=self.pooling_mode))
+                #adding depth at that scale
+                for k in range(dimensions['depth']):
+                    scale_layer_i.append(ResidualBlock2(dimensions['width'], kernel_size = 1))
 
 
             #post-processing the skip-connection (e.g. to reduce width for memory efficiency)
             if dimensions['width_skip']>0:
-                #skip_layer=[ConvLayerEqual(dimensions['width'], dimensions['width_skip'], kernel_size=1),
-                #            nn.BatchNorm2d(dimensions['width_skip']),
-                #            nn.ReLU()
-                #            ]
-                #skip_layers[i] = nn.Sequential(*skip_layer)
-                skip_layers[i] = ConvLayerEqualBlock(dimensions['width'],dimensions['width_skip'],kernel_size=1)
+                skip_layers[scale_name] = ConvLayerEqualBlock(dimensions['width'],dimensions['width_skip'],kernel_size=1)
 
-            if i < welf.network_depth-1:
-                #downsampling
-                down_layer_i.append(Down3(dimensions['width'], self.dimension_specification[i+1]['width'], kernel_size=3,
-                                     pooling_mode=self.pooling_mode))
 
-            down_layers[i] = nn.Sequential(*down_layer_i)
+            scale_layers[scale_name] = nn.Sequential(*scale_layer_i)
 
-            n_ch_in = dimensions['width']
         
-        return down_layers, skip_layers
+        return scale_layers, skip_layers
     
     def apply_preprocessing(self,x):
         x, pad = self.add_padding_if_needed(x)#add initial padding if needed
-        x = self.preprocessing_layer(x)
         return x, pad
 
-    def apply_encoder(self,x,pad,input_noise_mask):
+    def apply_encoder(self,x,pad):
         
         skip_connections={}
 
         for i in range(self.network_depth):
-            down_layer = self.down_layers[i]
-            
-            x = down_layer(x)#note: x is redefined in each layer
+            layer_name = 'scale_'+str(i)
+            scale_layer = self.scale_layers[layer_name]
 
-            if i in self.skip_layers.keys():#if there is a skip connection at this scale
-                skip_connections[i] = self.skip_layers[i](x)#store a representation for this scale
+            x = scale_layer(x)#note: x is redefined in each layer
+
+            if layer_name in self.skip_layers.keys():#if there is a skip connection at this scale
+                x_skip = self.skip_layers[layer_name](x)#store a representation for this scale
+                skip_connections[layer_name] = x_skip
         
         out = {'skip_connections': skip_connections,
                'initial_padding': pad}
@@ -278,8 +283,8 @@ class CNNEncoder(torch.nn.Module):
         
         
     def forward(self, x):
-        x, pad, input_noise_mask = self.apply_preprocessing(x,return_mask=True)
-        out = self.apply_encoder(x,pad,input_noise_mask)   
+        x, pad = self.apply_preprocessing(x)
+        out = self.apply_encoder(x,pad)   
         return out
     
     
@@ -350,17 +355,34 @@ class ConvLayerEqualBlock(torch.nn.Module):
         x = self.bn(x)
         return x
 
+class UpsampleConvLayer(torch.nn.Module):
+    """UpsampleConvLayer
+    Upsamples the input and then does a convolution. This method gives better results
+    compared to ConvTranspose2d.
+    ref: http://distill.pub/2016/deconv-checkerboard/
+    """
 
-class Down3(torch.nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size, upsample=None):
+        super(UpsampleConvLayer, self).__init__()
+        self.upsample = upsample
+        self.conv2d=ConvLayerEqual(in_channels, out_channels, kernel_size=kernel_size,bias=False)# bias=False, since followed by bn
+        self.bn = nn.BatchNorm2d(out_channels)
+        self.relu = torch.nn.ReLU()
+
+    def forward(self, x):
+        if self.upsample:
+            x = F.interpolate(x, mode='nearest', scale_factor=self.upsample)
+        x = self.conv2d(x)
+        x = self.relu(self.bn(x))
+        return x
+
+class DownsampleConvLayer(torch.nn.Module):
     '''
-    Down2 is not really general to arbitrary kernel_sizes, but needs kernel_size=1. This is an attempt to write
-    this function more generally using ConvLayerEqual. 
-
-    We have not tested this function yet.
+    Downsamples by a factor of 2
     '''
     def __init__(self, in_channels, out_channels, kernel_size,bias=True,pooling_mode='max'):
-        super(Down3, self).__init__()
-        self.conv=ConvLayerEqual(in_channels, out_channels, kernel_size=kernel_size, stride=1,bias=bias)#can not set bias=False, because maxpool() and relu() are not invariant to additive constant
+        super(DownsampleConvLayer, self).__init__()
+        self.conv=ConvLayerEqual(in_channels, out_channels, kernel_size=kernel_size,bias=bias)#can not set bias=False, because maxpool() and relu() are not invariant to additive constant
         self.relu = torch.nn.ReLU()
         if pooling_mode == 'max':
             self.pooling = nn.MaxPool2d(2, stride=2)
@@ -388,9 +410,9 @@ class ResidualBlock2(torch.nn.Module):
 
     def __init__(self, channels,kernel_size=3,bias=True):
         super(ResidualBlock2, self).__init__()
-        self.conv1 = ConvLayerEqual(channels, channels, kernel_size=kernel_size, stride=1,bias=bias)#I should set bias=False, since followed by bn
+        self.conv1 = ConvLayerEqual(channels, channels, kernel_size=kernel_size, bias=bias)#I should set bias=False, since followed by bn
         self.bn1 = nn.BatchNorm2d(channels, affine=True)
-        self.conv2 = ConvLayerEqual(channels, channels, kernel_size=kernel_size, stride=1,bias=bias)#I should set bias=False, since followed by bn
+        self.conv2 = ConvLayerEqual(channels, channels, kernel_size=kernel_size, bias=bias)#I should set bias=False, since followed by bn
         self.bn2 = nn.BatchNorm2d(channels, affine=True)
         self.relu = torch.nn.ReLU()
 
@@ -421,8 +443,6 @@ def apply_geometric_transformation(x,angle,flip=False):
 
 
 
-
-
-
+    return x
 
 
