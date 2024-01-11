@@ -1,6 +1,3 @@
-
-
-
 import os
 import torch
 from torch import nn
@@ -54,17 +51,20 @@ def train_model(model, loader, optimizer):
         optimizer.zero_grad()
         inputs = to_device(inputs)
         targets = to_device(targets)
-        outputs = model(inputs)
+        model_out_members, model_out_ensemble = model(inputs)
+
+        model_out = model_out_members[0]['object_mask']#assuming just one member and that the output group name is 'object_mask'
         
         
         # The ground truth labels have a channel dimension (NCHW).
         # We need to remove it before passing it into
         # CrossEntropyLoss so that it has shape (NHW) and each element
         # is a value representing the class of the pixel.
+
         if cel:
             targets = targets.squeeze(dim=1)
         # end if
-        loss = criterion(outputs, targets)
+        loss = criterion(model_out, targets)
         loss.backward()
         optimizer.step()
     
@@ -80,10 +80,12 @@ def train_model(model, loader, optimizer):
 
 def print_test_dataset_masks(model, test_pets_targets, test_pets_labels, epoch, save_path, show_plot):
     to_device(model.eval())
-    predictions = model(to_device(test_pets_targets))
+    model_out_members, model_out_ensemble = model(to_device(test_pets_targets))
+    pred = model_out_ensemble['object_mask']#assuming that the output group name is 'object_mask'
+
     test_pets_labels = to_device(test_pets_labels)
     # print("Predictions Shape: {}".format(predictions.shape))
-    pred = nn.Softmax(dim=1)(predictions)
+    #pred = nn.Softmax(dim=1)(pred)
 
     pred_labels = pred.argmax(dim=1)
     # Add a value 1 dimension at dim=1
@@ -145,9 +147,10 @@ def test_dataset_accuracy(model, loader):
     for batch_idx, (inputs, targets) in enumerate(loader, 0):
         inputs = to_device(inputs)
         targets = to_device(targets)
-        predictions = model(inputs)
+        model_out_members, model_out_ensemble = model(inputs)
+        pred_probabilities = model_out_ensemble['object_mask']#assuming that the output group name is 'object_mask'
         
-        pred_probabilities = nn.Softmax(dim=1)(predictions)
+        #pred_probabilities = nn.Softmax(dim=1)(predictions)
         pred_labels = predictions.argmax(dim=1)
 
         # Add a value 1 dimension at dim=1
