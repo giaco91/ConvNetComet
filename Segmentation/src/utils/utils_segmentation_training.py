@@ -10,6 +10,8 @@ from utils_image_visualization import *
 # Send the Tensor or Model (input argument x) to the right device
 # for this notebook. i.e. if GPU is enabled, then send to GPU/CUDA
 # otherwise send to CPU.
+
+
 def to_device(x):
     if torch.cuda.is_available():
         return x.cuda()
