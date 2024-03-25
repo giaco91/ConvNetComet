@@ -38,13 +38,10 @@ def close_figures():
 
 # Train the model for a single epoch
 def train_model(model, loader, optimizer):
+
     to_device(model.train())
-    cel = True
-    if cel:
-        criterion = nn.CrossEntropyLoss(reduction='mean')
-    else:
-        criterion = IoULoss(softmax=True)
-    # end if
+
+    criterion = nn.CrossEntropyLoss(reduction='mean')
 
     running_loss = 0.0
     running_samples = 0
@@ -56,23 +53,15 @@ def train_model(model, loader, optimizer):
         model_out_members, model_out_ensemble = model(inputs)
 
         model_out = model_out_members[0]['object_mask']#assuming just one member and that the output group name is 'object_mask'
-        
-        
-        # The ground truth labels have a channel dimension (NCHW).
-        # We need to remove it before passing it into
-        # CrossEntropyLoss so that it has shape (NHW) and each element
-        # is a value representing the class of the pixel.
 
-        if cel:
-            targets = targets.squeeze(dim=1)
-        # end if
+        targets = targets.squeeze(dim=1)
+
         loss = criterion(model_out, targets)
         loss.backward()
         optimizer.step()
     
         running_samples += targets.size(0)
         running_loss += loss.item()
-    # end for
 
     print("Trained {} samples, Loss: {:.4f}".format(
         running_samples,
@@ -135,7 +124,7 @@ def print_test_dataset_masks(model, test_pets_targets, test_pets_labels, epoch, 
         plt.show()
 
 
-def test_dataset_accuracy(model, loader):
+def test_dataset_accuracy(model, loader,show_every_k_batches=10):
     to_device(model.eval())
     iou = to_device(TM.classification.MulticlassJaccardIndex(3, average='micro', ignore_index=TrimapClasses.BACKGROUND))
     pixel_metric = to_device(TM.classification.MulticlassAccuracy(3, average='micro'))
@@ -145,15 +134,18 @@ def test_dataset_accuracy(model, loader):
     custom_iou_accuracies = []
     
     print_model_parameters(model)
-
+    print('Start evaluation ...')
     for batch_idx, (inputs, targets) in enumerate(loader, 0):
+
         inputs = to_device(inputs)
         targets = to_device(targets)
+        
         model_out_members, model_out_ensemble = model(inputs)
         pred_probabilities = model_out_ensemble['object_mask']#assuming that the output group name is 'object_mask'
-        
+
         #pred_probabilities = nn.Softmax(dim=1)(predictions)
-        pred_labels = predictions.argmax(dim=1)
+        
+        pred_labels = pred_probabilities.argmax(dim=1)
 
         # Add a value 1 dimension at dim=1
         pred_labels = pred_labels.unsqueeze(1)
@@ -167,12 +159,14 @@ def test_dataset_accuracy(model, loader):
         iou_accuracies.append(iou_accuracy.item())
         pixel_accuracies.append(pixel_accuracy.item())
         custom_iou_accuracies.append(custom_iou.item())
+
+        if batch_idx%show_every_k_batches==0:
+            print_test_dataset_masks(model, inputs, targets, 
+                epoch=0, save_path=None, show_plot=True)
         
-        del inputs
-        del targets
-        del predictions
-    # end for
-    
+    print_test_dataset_masks(model, inputs, targets, 
+        epoch=0, save_path=None, show_plot=True)
+
     iou_tensor = torch.FloatTensor(iou_accuracies)
     pixel_tensor = torch.FloatTensor(pixel_accuracies)
     custom_iou_tensor = torch.FloatTensor(custom_iou_accuracies)
