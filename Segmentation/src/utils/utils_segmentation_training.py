@@ -37,9 +37,15 @@ def close_figures():
 
 
 # Train the model for a single epoch
-def train_model(model, loader, optimizer):
+def train_model(model, loader, optimizer = None, mode='train',max_batches=1e8):
 
-    to_device(model.train())
+    if mode=='train':
+        to_device(model.train())
+        assert optimizer is not None
+    elif mode=='eval':
+        to_device(model.eval())
+    else:
+        raise ValueError('Unknown mode: ',mode)
 
     criterion = nn.CrossEntropyLoss(reduction='mean')
 
@@ -47,52 +53,59 @@ def train_model(model, loader, optimizer):
     running_samples = 0
     
     for batch_idx, (inputs, targets) in enumerate(loader, 0):
-        optimizer.zero_grad()
+
         inputs = to_device(inputs)
         targets = to_device(targets)
-        model_out_members, model_out_ensemble = model(inputs)
-
-        model_out = model_out_members[0]['object_mask']#assuming just one member and that the output group name is 'object_mask'
-
         targets = targets.squeeze(dim=1)
+        
+        if mode=='train':
+            optimizer.zero_grad()
+            model_out_members, model_out_ensemble = model(inputs)
+            model_out = model_out_members[0]['object_mask']#assuming just one member and that the output group name is 'object_mask'
 
-        loss = criterion(model_out, targets)
-        loss.backward()
-        optimizer.step()
-    
+            loss = criterion(model_out, targets)
+            loss.backward()
+            optimizer.step()
+
+        elif mode=='eval':
+            #evaluation
+            with torch.no_grad():
+                model_out_members, model_out_ensemble = model(inputs)
+                model_out = model_out_members[0]['object_mask']#assuming just one member and that the output group name is 'object_mask'
+                loss = criterion(model_out, targets)
+
         running_samples += targets.size(0)
         running_loss += loss.item()
 
-    print("Trained {} samples, Loss: {:.4f}".format(
-        running_samples,
-        running_loss / (batch_idx+1),
-    ))
+        if batch_idx>=max_batches:
+            break
+
+    average_loss = running_loss / (batch_idx+1)
+    return running_samples, average_loss
 
 
-def print_test_dataset_masks(model, test_pets_targets, test_pets_labels, epoch, save_path, show_plot):
+def print_test_dataset_masks(model, test_pets_targets, test_pets_labels, epoch=None, save_path=None, show_plot=None):
     to_device(model.eval())
     model_out_members, model_out_ensemble = model(to_device(test_pets_targets))
     pred = model_out_ensemble['object_mask']#assuming that the output group name is 'object_mask'
 
     test_pets_labels = to_device(test_pets_labels)
-    # print("Predictions Shape: {}".format(predictions.shape))
-    #pred = nn.Softmax(dim=1)(pred)
 
     pred_labels = pred.argmax(dim=1)
     # Add a value 1 dimension at dim=1
     pred_labels = pred_labels.unsqueeze(1)
-    # print("pred_labels.shape: {}".format(pred_labels.shape))
     pred_mask = pred_labels.to(torch.float)
     
-    # accuracy = prediction_accuracy(test_pets_labels, pred_labels)
     iou = to_device(TM.classification.MulticlassJaccardIndex(3, average='micro', ignore_index=TrimapClasses.BACKGROUND))
     iou_accuracy = iou(pred_mask, test_pets_labels)
     pixel_metric = to_device(TM.classification.MulticlassAccuracy(3, average='micro'))
     pixel_accuracy = pixel_metric(pred_labels, test_pets_labels)
     custom_iou = IoUMetric(pred, test_pets_labels)
-    title = f'Epoch: {epoch:02d}, Accuracy[Pixel: {pixel_accuracy:.4f}, IoU: {iou_accuracy:.4f}, Custom IoU: {custom_iou:.4f}]'
-    print(title)
-    # print(f"Accuracy: {accuracy:.4f}")
+
+    if epoch is not None:
+        title = f'Epoch: {epoch:02d}, Accuracy[Pixel: {pixel_accuracy:.4f}, IoU: {iou_accuracy:.4f}, Custom IoU: {custom_iou:.4f}]'
+    else:
+        title = f'Accuracy[Pixel: {pixel_accuracy:.4f}, IoU: {iou_accuracy:.4f}, Custom IoU: {custom_iou:.4f}]'
 
     # Close all previously open figures.
     close_figures()
@@ -135,34 +148,35 @@ def test_dataset_accuracy(model, loader,show_every_k_batches=10):
     
     print_model_parameters(model)
     print('Start evaluation ...')
-    for batch_idx, (inputs, targets) in enumerate(loader, 0):
 
-        inputs = to_device(inputs)
-        targets = to_device(targets)
-        
-        model_out_members, model_out_ensemble = model(inputs)
-        pred_probabilities = model_out_ensemble['object_mask']#assuming that the output group name is 'object_mask'
+    with torch.no_grad():
+        for batch_idx, (inputs, targets) in enumerate(loader, 0):
 
-        #pred_probabilities = nn.Softmax(dim=1)(predictions)
-        
-        pred_labels = pred_probabilities.argmax(dim=1)
+            inputs = to_device(inputs)
+            targets = to_device(targets)
+            
+            model_out_members, model_out_ensemble = model(inputs)
+            pred_probabilities = model_out_ensemble['object_mask']#assuming that the output group name is 'object_mask'
 
-        # Add a value 1 dimension at dim=1
-        pred_labels = pred_labels.unsqueeze(1)
-        # print("pred_labels.shape: {}".format(pred_labels.shape))
-        pred_mask = pred_labels.to(torch.float)
+            #pred_probabilities = nn.Softmax(dim=1)(predictions)
+            
+            pred_labels = pred_probabilities.argmax(dim=1)
 
-        iou_accuracy = iou(pred_mask, targets)
-        # pixel_accuracy = pixel_metric(pred_mask, targets)
-        pixel_accuracy = pixel_metric(pred_labels, targets)
-        custom_iou = IoUMetric(pred_probabilities, targets)
-        iou_accuracies.append(iou_accuracy.item())
-        pixel_accuracies.append(pixel_accuracy.item())
-        custom_iou_accuracies.append(custom_iou.item())
+            # Add a value 1 dimension at dim=1
+            pred_labels = pred_labels.unsqueeze(1)
+            # print("pred_labels.shape: {}".format(pred_labels.shape))
+            pred_mask = pred_labels.to(torch.float)
 
-        if batch_idx%show_every_k_batches==0:
-            print_test_dataset_masks(model, inputs, targets, 
-                epoch=0, save_path=None, show_plot=True)
+            iou_accuracy = iou(pred_mask, targets)
+            # pixel_accuracy = pixel_metric(pred_mask, targets)
+            pixel_accuracy = pixel_metric(pred_labels, targets)
+            custom_iou = IoUMetric(pred_probabilities, targets)
+            iou_accuracies.append(iou_accuracy.item())
+            pixel_accuracies.append(pixel_accuracy.item())
+            custom_iou_accuracies.append(custom_iou.item())
+
+            if batch_idx%show_every_k_batches==0:
+                print_test_dataset_masks(model, inputs, targets,epoch=None,save_path=None, show_plot=True)
         
     print_test_dataset_masks(model, inputs, targets, 
         epoch=0, save_path=None, show_plot=True)
