@@ -187,3 +187,49 @@ def test_dataset_accuracy(model, loader,show_every_k_batches=10):
     
     print("Test Dataset Accuracy")
     print(f"Pixel Accuracy: {pixel_tensor.mean():.4f}, IoU Accuracy: {iou_tensor.mean():.4f}, Custom IoU Accuracy: {custom_iou_tensor.mean():.4f}")
+
+
+
+def plot_losses(loss_dict):
+    plt.figure(figsize=(10, 6))
+    plt.plot(loss_dict['loss_train'], label='Training Loss')
+    plt.plot(loss_dict['loss_test'], label='Test Loss')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training and Test Losses Over Epochs')
+    plt.legend()
+    plt.show()
+
+def train_loop(model, train_loader, test_loader, test_data, epochs, optimizer, scheduler, 
+               save_path,print_every=2,show_plots=False):
+    
+    losses = {'loss_train': [],'loss_test': []}#here we store the losses
+    
+    if save_path is not None:
+        os.makedirs(save_path, exist_ok=True)
+        
+    test_inputs, test_targets = test_data
+    epoch_i, epoch_j = epochs
+    
+    for i in range(epoch_i, epoch_j):
+        epoch = i
+        print(f"Epoch: {i:02d}, Learning Rate: {optimizer.param_groups[0]['lr']}")
+        
+        running_samples, average_loss = train_model(model, train_loader, optimizer, mode='train')
+        losses['loss_train'].append(average_loss)
+        print("Trained {} samples, Loss: {:.4f}".format(running_samples,average_loss,))
+        
+        
+        running_samples, average_loss = train_model(model, test_loader, mode='eval',max_batches=10)
+        losses['loss_test'].append(average_loss)
+        print("Tested {} samples, Loss: {:.4f}".format(running_samples,average_loss,))
+        
+        if i%print_every==0 or (epoch == epoch_j-1):   
+            with torch.inference_mode():
+                # Display the plt in the final training epoch.
+                print_test_dataset_masks(model, test_inputs, test_targets,
+                                         epoch=epoch, save_path=save_path, show_plot=(epoch == epoch_j-1) or show_plots)
+            plot_losses(losses)
+
+        if scheduler is not None:
+            scheduler.step()
