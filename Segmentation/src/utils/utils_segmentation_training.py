@@ -189,7 +189,6 @@ def test_dataset_accuracy(model, loader,show_every_k_batches=10):
     print(f"Pixel Accuracy: {pixel_tensor.mean():.4f}, IoU Accuracy: {iou_tensor.mean():.4f}, Custom IoU Accuracy: {custom_iou_tensor.mean():.4f}")
 
 
-
 def plot_losses(loss_dict):
     plt.figure(figsize=(10, 6))
     plt.plot(loss_dict['loss_train'], label='Training Loss')
